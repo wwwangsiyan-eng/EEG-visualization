@@ -1,8 +1,8 @@
 # Core
 numpy>=1.22.0
-scipy>=1.9.0
+scipy>=1.9.0          # bandpass filtering (butter + sosfiltfilt), interpolation
 PyQt5>=5.15.0
-matplotlib>=3.5.0
+matplotlib>=3.7.0     # constrained_layout, colorbar support
 
 # EEG file format support
 # Required for: .edf, .bdf, .mff, .dat

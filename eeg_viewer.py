@@ -29,6 +29,7 @@ from scipy.signal import butter, sosfiltfilt
 
 from pathlib import Path
 import file_loaders
+from topo_window import TopoHeatmapWindow
 
 # Fallback - same mapping as gui/constants.py
 EGI_TO_1020_MAPPING = {
@@ -58,7 +59,7 @@ def is_egi_format(channel_names):
 class EEGViewerWidget(QWidget):
     """
     Interactive EEG viewer with scrolling, scaling, and metadata display.
-    
+
     Features:
     - Adjustable X-scale (time window)
     - Adjustable Y-scale (amplitude)
@@ -67,7 +68,11 @@ class EEGViewerWidget(QWidget):
     - Metadata panel showing all signal information
     - Support for both 2D (continuous) and 3D (epoched) data
     """
-    
+    # Emitted after every plot update so that linked windows (e.g. topo heatmap)
+    # can refresh themselves.  No payload — listeners pull what they need from
+    # the viewer's public attributes.
+    view_changed = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.eeg_signal: Optional[EEGSignal] = None
@@ -225,6 +230,15 @@ class EEGViewerWidget(QWidget):
         filter_action.triggered.connect(self._open_filtering_window)
         toolbar.addAction(filter_action)
 
+        topo_action = QAction("🧠 Topo Map", self)
+        topo_action.setToolTip(
+            "Open topographic heatmap — updates in real time as you scroll.\n"
+            "Supports EGI 128-ch and standard 10-20 montages.\n"
+            "EGI data can be converted to 10-20 inside the topo window."
+        )
+        topo_action.triggered.connect(self._open_topo_window)
+        toolbar.addAction(topo_action)
+
         return toolbar
     
     def _create_control_panel(self) -> QFrame:
@@ -258,6 +272,9 @@ class EEGViewerWidget(QWidget):
             btn = QPushButton(f"{preset}s")
             btn.setMinimumWidth(36)
             btn.setMaximumWidth(46)
+            btn.setAutoDefault(False)
+            btn.setDefault(False)
+            btn.setFocusPolicy(Qt.NoFocus)
             btn.clicked.connect(lambda checked, t=preset: self._set_time_window(t))
             x_layout.addWidget(btn)
         row1.addWidget(x_group)
@@ -476,6 +493,33 @@ class EEGViewerWidget(QWidget):
         self._open_windows.append(win)
         win.destroyed.connect(lambda: self._open_windows.remove(win) if win in self._open_windows else None)
 
+    def _open_topo_window(self):
+        """Open topographic heatmap window.
+
+        The window listens to this viewer's view_changed signal so it redraws
+        automatically as the user scrolls or changes the time window.
+        Data is not required to open — the topo window will show a placeholder
+        until data is loaded.
+        """
+        if not hasattr(self, '_open_windows'):
+            self._open_windows = []
+
+        win = TopoHeatmapWindow(viewer=self, parent=None)
+        win.show()
+        # Connect so the topo window updates whenever the main view changes
+        self.view_changed.connect(win.on_viewer_changed)
+        self._open_windows.append(win)
+
+        def _on_topo_closed():
+            try:
+                self.view_changed.disconnect(win.on_viewer_changed)
+            except Exception:
+                pass
+            if win in self._open_windows:
+                self._open_windows.remove(win)
+
+        win.destroyed.connect(_on_topo_closed)
+
     def _create_metadata_panel(self) -> QFrame:
         """Create the metadata display panel."""
         frame = QFrame()
@@ -620,8 +664,16 @@ class EEGViewerWidget(QWidget):
         self.time_scrollbar.setPageStep(int(self.time_window * 10))
     
     def _update_metadata_display(self):
-        """Update the metadata tables."""
+        """Update the metadata tables.
+
+        These tables live inside _create_metadata_panel(), which is only
+        instantiated on demand (legacy path) — not in the main _init_ui().
+        Guard every access so calling this method is a safe no-op when the
+        panel has not been built.
+        """
         if self.eeg_signal is None:
+            return
+        if not hasattr(self, 'info_table'):
             return
         
         eeg = self.eeg_signal
@@ -662,11 +714,14 @@ class EEGViewerWidget(QWidget):
     
     def _update_channel_table(self):
         """Update channel information table.
-        
+
         When 10-20 conversion is active, shows the converted 10-20 electrode
         names and their averaged amplitude ranges instead of the raw EGI channels.
+        Guard against the table not existing (legacy panel not built).
         """
         if self.eeg_signal is None:
+            return
+        if not hasattr(self, 'channel_table'):
             return
         
         eeg = self.eeg_signal
@@ -1045,9 +1100,12 @@ class EEGViewerWidget(QWidget):
         
         # Draw canvas (constrained_layout handles spacing automatically)
         self.canvas.draw()
-        
+
         # Update time label
         self.time_label.setText(f"{self.current_time_start:.2f} - {self.current_time_start + self.time_window:.2f} s")
+
+        # Notify linked windows (e.g. topo heatmap) that the view has changed
+        self.view_changed.emit()
     
     def _add_scale_bar(self, ax, channel_offset):
         """Add amplitude scale bar to the plot showing actual µV values.
@@ -1213,10 +1271,13 @@ class EEGViewerWidget(QWidget):
         
         # Use draw_idle for non-blocking render
         self.canvas.draw_idle()
-        
+
         # Update time label
         self.time_label.setText(f"{self.current_time_start:.2f} - {self.current_time_start + self.time_window:.2f} s")
-    
+
+        # Notify linked windows (topo heatmap, etc.)
+        self.view_changed.emit()
+
     # ========================
     # Event Handlers
     # ========================
@@ -2078,7 +2139,7 @@ class _SingleChannelControlsMixin:
     And will have connected slot  _on_controls_changed()  that subclasses must implement.
     """
 
-    def _build_shared_controls(self, eeg_signal: EEGSignal) -> QWidget:
+    def _build_shared_controls(self, eeg_signal: EEGSignal, include_scrollbar: bool = True) -> QWidget:
         """Build and return the shared controls widget. Stores state on self."""
         self._eeg = eeg_signal
         self._ch_idx = 0
@@ -2112,34 +2173,47 @@ class _SingleChannelControlsMixin:
 
         # ── Time window ──
         tw_group = QGroupBox("Time Window")
-        tw_row = QHBoxLayout(tw_group)
-        tw_row.addWidget(QLabel("Window (s):"))
+        tw_vbox = QVBoxLayout(tw_group)
+        tw_vbox.setContentsMargins(4, 4, 4, 4)
+        tw_vbox.setSpacing(3)
+        tw_top = QHBoxLayout()
+        tw_top.addWidget(QLabel("Window:"))
         self._tw_spin = QDoubleSpinBox()
         self._tw_spin.setRange(0.1, 300.0)
         self._tw_spin.setValue(self._time_win)
         self._tw_spin.setSingleStep(1.0)
         self._tw_spin.setDecimals(1)
+        self._tw_spin.setSuffix(" s")
         self._tw_spin.valueChanged.connect(self._on_tw_changed)
-        tw_row.addWidget(self._tw_spin)
+        tw_top.addWidget(self._tw_spin)
+        tw_vbox.addLayout(tw_top)
+        tw_btns = QHBoxLayout()
+        tw_btns.setSpacing(2)
         for t in [1, 5, 10, 30]:
             b = QPushButton(f"{t}s")
-            b.setMaximumWidth(35)
+            b.setMaximumWidth(38)
+            b.setAutoDefault(False)
+            b.setDefault(False)
+            b.setFocusPolicy(Qt.NoFocus)
             b.clicked.connect(lambda _, v=t: self._tw_spin.setValue(v))
-            tw_row.addWidget(b)
+            tw_btns.addWidget(b)
+        tw_vbox.addLayout(tw_btns)
         vbox.addWidget(tw_group)
 
-        # ── Time scroll bar ──
-        sb_row = QHBoxLayout()
-        sb_row.addWidget(QLabel("Pos:"))
+        # ── Time scroll bar ── (created here; placed in controls if include_scrollbar=True,
+        #                        otherwise caller adds self._time_sb / self._time_lbl below canvas)
         self._time_sb = QScrollBar(Qt.Horizontal)
         self._time_sb.setMinimum(0)
         self._time_sb.setMaximum(1000)
         self._time_sb.valueChanged.connect(self._on_sb_changed)
-        sb_row.addWidget(self._time_sb, stretch=1)
         self._time_lbl = QLabel("0.00 – 10.00 s")
         self._time_lbl.setMinimumWidth(120)
-        sb_row.addWidget(self._time_lbl)
-        vbox.addLayout(sb_row)
+        if include_scrollbar:
+            sb_row = QHBoxLayout()
+            sb_row.addWidget(QLabel("Pos:"))
+            sb_row.addWidget(self._time_sb, stretch=1)
+            sb_row.addWidget(self._time_lbl)
+            vbox.addLayout(sb_row)
 
         # ── Amplitude ──
         amp_group = QGroupBox("Amplitude Scale")
@@ -2206,7 +2280,8 @@ class _SingleChannelControlsMixin:
         hp_row.addWidget(self._hp_spin)
         vbox.addWidget(hp_group)
 
-        vbox.addStretch()
+        if include_scrollbar:
+            vbox.addStretch()
 
         # ── Auto-scroll timer ──
         self._auto_timer = QTimer()
@@ -2363,8 +2438,32 @@ class FFTOverTimeWindow(_SingleChannelControlsMixin, QWidget):
         self.setMinimumSize(900, 650)
         self.resize(1100, 750)
 
-        # Build shared controls (sets self._eeg, etc.)
-        controls_widget = self._build_shared_controls(eeg_signal)
+        # Build shared controls WITHOUT embedded scrollbar — we put it below the canvas
+        controls_widget = self._build_shared_controls(eeg_signal, include_scrollbar=False)
+
+        # ── FFT frequency range controls (appended to controls widget) ──
+        cw_vbox = controls_widget.layout()
+        fft_grp = QGroupBox("FFT Frequency Range")
+        fft_grp.setToolTip("Sets the visible frequency band in the spectrogram")
+        fft_grid = QGridLayout(fft_grp)
+        fft_grid.addWidget(QLabel("Min (Hz):"), 0, 0)
+        self._fft_fmin_spin = QDoubleSpinBox()
+        self._fft_fmin_spin.setRange(0.0, 990.0)
+        self._fft_fmin_spin.setValue(0.0)
+        self._fft_fmin_spin.setSingleStep(1.0)
+        self._fft_fmin_spin.setDecimals(1)
+        self._fft_fmin_spin.valueChanged.connect(self._on_controls_changed)
+        fft_grid.addWidget(self._fft_fmin_spin, 0, 1)
+        fft_grid.addWidget(QLabel("Max (Hz):"), 1, 0)
+        self._fft_fmax_spin = QDoubleSpinBox()
+        self._fft_fmax_spin.setRange(1.0, 1000.0)
+        self._fft_fmax_spin.setValue(100.0)
+        self._fft_fmax_spin.setSingleStep(5.0)
+        self._fft_fmax_spin.setDecimals(1)
+        self._fft_fmax_spin.valueChanged.connect(self._on_controls_changed)
+        fft_grid.addWidget(self._fft_fmax_spin, 1, 1)
+        cw_vbox.addWidget(fft_grp)
+        cw_vbox.addStretch()
 
         # ── Matplotlib figures ──
         self._figure = Figure(figsize=(10, 7), dpi=100, constrained_layout=True)
@@ -2372,18 +2471,25 @@ class FFTOverTimeWindow(_SingleChannelControlsMixin, QWidget):
         self._canvas = FigureCanvas(self._figure)
         self._canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        # Main layout: plot on left, controls on right
+        # Main layout: plot+scrollbar on left, controls on right
         main = QHBoxLayout(self)
         main.setContentsMargins(4, 4, 4, 4)
 
+        # Left side: canvas with time scrollbar pinned below it
         plot_side = QVBoxLayout()
+        plot_side.setSpacing(2)
         plot_side.addWidget(self._canvas, stretch=1)
+        sb_row = QHBoxLayout()
+        sb_row.addWidget(QLabel("Position:"))
+        sb_row.addWidget(self._time_sb, stretch=1)
+        sb_row.addWidget(self._time_lbl)
+        plot_side.addLayout(sb_row)
         main.addLayout(plot_side, stretch=1)
 
-        # Wrap controls in a scroll area so they don't overflow on small screens
+        # Right side: controls in a scroll area so nothing gets clipped
         ctrl_scroll = QScrollArea()
         ctrl_scroll.setWidgetResizable(True)
-        ctrl_scroll.setMaximumWidth(260)
+        ctrl_scroll.setFixedWidth(260)
         ctrl_scroll.setWidget(controls_widget)
         main.addWidget(ctrl_scroll)
 
@@ -2436,8 +2542,12 @@ class FFTOverTimeWindow(_SingleChannelControlsMixin, QWidget):
                 view, NFFT=n_fft, Fs=sfreq,
                 noverlap=overlap, detrend='mean'
             )
-            # Limit to 0–100 Hz for readability
-            freq_mask = freqs <= 100.0
+            # Limit to user-defined frequency range
+            _fmin = self._fft_fmin_spin.value()
+            _fmax = self._fft_fmax_spin.value()
+            if _fmax <= _fmin:
+                _fmax = _fmin + 1.0
+            freq_mask = (freqs >= _fmin) & (freqs <= _fmax)
             Pxx = Pxx[freq_mask, :]
             freqs = freqs[freq_mask]
             # dB scale, clip to avoid log(0)
@@ -2449,9 +2559,10 @@ class FFTOverTimeWindow(_SingleChannelControlsMixin, QWidget):
             )
             self._figure.colorbar(im, ax=ax_spec, label='Power (dB)')
             ax_spec.set_xlim(time_axis[0], time_axis[-1])
+            ax_spec.set_ylim(_fmin, _fmax)
             ax_spec.set_ylabel("Frequency (Hz)")
             ax_spec.set_xlabel("Time (s)")
-            ax_spec.set_title("FFT Spectrogram")
+            ax_spec.set_title(f"FFT Spectrogram  [{_fmin:.0f}–{_fmax:.0f} Hz]")
         except Exception as e:
             ax_spec.text(0.5, 0.5, f"Spectrogram error:\n{e}",
                          ha='center', va='center', transform=ax_spec.transAxes)
@@ -2486,7 +2597,9 @@ class FilteringWindow(_SingleChannelControlsMixin, QWidget):
         self._band2_lo = 30.0
         self._band2_hi = 80.0  # gamma
 
-        controls_widget = self._build_shared_controls(eeg_signal)
+        # Build shared controls WITHOUT embedded scrollbar — we put it below the canvas
+        controls_widget = self._build_shared_controls(eeg_signal, include_scrollbar=False)
+        controls_widget.layout().addStretch()
 
         # ── Matplotlib figure ──
         self._figure = Figure(figsize=(10, 8), dpi=100, constrained_layout=True)
@@ -2500,7 +2613,7 @@ class FilteringWindow(_SingleChannelControlsMixin, QWidget):
         right_vbox.setContentsMargins(0, 0, 0, 0)
         right_vbox.setSpacing(8)
 
-        right_vbox.addWidget(controls_widget, stretch=1)
+        right_vbox.addWidget(controls_widget)
 
         # Band 1 box
         b1_box = QGroupBox("Middle Band (default: Theta)")
@@ -2547,12 +2660,23 @@ class FilteringWindow(_SingleChannelControlsMixin, QWidget):
         # Scroll area for right panel
         ctrl_scroll = QScrollArea()
         ctrl_scroll.setWidgetResizable(True)
-        ctrl_scroll.setMaximumWidth(280)
+        ctrl_scroll.setFixedWidth(280)
         ctrl_scroll.setWidget(right_panel)
 
         main = QHBoxLayout(self)
         main.setContentsMargins(4, 4, 4, 4)
-        main.addWidget(self._canvas, stretch=1)
+
+        # Left side: canvas with time scrollbar pinned below it
+        plot_side = QVBoxLayout()
+        plot_side.setSpacing(2)
+        plot_side.addWidget(self._canvas, stretch=1)
+        sb_row = QHBoxLayout()
+        sb_row.addWidget(QLabel("Position:"))
+        sb_row.addWidget(self._time_sb, stretch=1)
+        sb_row.addWidget(self._time_lbl)
+        plot_side.addLayout(sb_row)
+        main.addLayout(plot_side, stretch=1)
+
         main.addWidget(ctrl_scroll)
 
         self._on_controls_changed()

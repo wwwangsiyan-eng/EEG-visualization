@@ -81,8 +81,9 @@ You can load the following raw EEG & electrophysiology data formats using the vi
 Each of these opens a separate, independent window that you can keep open alongside the main viewer.
 
 * **📋 Signal Info** — Displays a detailed table of signal metadata: data type, shape, sampling rate, duration, and per-channel amplitude ranges.
-* **🌊 FFT View** — Shows the selected channel's EEG trace alongside a real-time FFT spectrogram (frequency content over time), time-locked to the current view position.
+* **🌊 FFT View** — Shows the selected channel's EEG trace alongside a real-time FFT spectrogram (frequency content over time), time-locked to the current view position. Use the **FFT Frequency Range** controls (Low / High Hz) to zoom in on a specific frequency range in the spectrogram.
 * **🔬 Filter View** — Displays three stacked panels for a single channel: the raw (or highpass-filtered) trace, a user-adjustable bandpass trace (default: Theta 4–8 Hz), and a second bandpass trace (default: Gamma 30–80 Hz).
+* **🧠 Topo Map** — Opens a topographic heatmap window showing the spatial distribution of EEG activity across the scalp. Updates automatically in real time as you scroll the main viewer. See [Topographic Heatmap Window](#topographic-heatmap-window) below.
 
 ### Bottom Control Panel
 
@@ -117,3 +118,40 @@ Drag the horizontal scrollbar directly below the plot to navigate through the ti
 
 ### Closing the App
 Click the standard close button (`×`) at the top corner of the application window.
+
+---
+
+## 3. Topographic Heatmap Window
+
+Click **🧠 Topo Map** in the toolbar to open the topographic heatmap. It renders a 2-D head map showing how a chosen scalar metric is distributed across all electrodes, and updates automatically whenever you scroll or change the time window in the main viewer.
+
+### Metric
+Choose what each electrode's colour represents:
+
+| Metric | Description |
+|--------|-------------|
+| Mean Amplitude (|µV|) | Average absolute deflection from DC baseline |
+| RMS Amplitude (µV) | Root-mean-square amplitude |
+| Variance (µV²) | Signal variance |
+| Band Power | Mean squared amplitude (power) in the selected band |
+| Raw Mean (µV) | Arithmetic mean (signed; useful for DC offset maps) |
+
+### Frequency Band Filter
+The **Low Hz** and **High Hz** spinboxes define a bandpass pre-filter applied **before** computing any metric. Changing the band always updates the map, regardless of which metric is selected — so you can view, for example, "alpha-band RMS" or "theta-band variance". Quick-preset buttons (δ, θ, α, β, γ) snap to standard clinical bands.
+
+To view broadband (unfiltered) activity, set Low = 0.1 Hz and High to the Nyquist limit (half your sampling rate).
+
+### Colormap
+Choose from a set of perceptual and diverging colormaps. **RdBu_r** and **seismic** work well for signed metrics (Raw Mean). **viridis**, **hot**, and **plasma** suit unsigned power metrics.
+
+### EGI / 10-20 Format
+For high-density EGI 128-channel recordings the window shows all 128 electrodes by default. Check **EGI → 10-20** to collapse the map to 24 standard 10-20 positions (each averaged over the surrounding EGI cluster). Uncheck to return to the full 128-channel view.
+
+### Interpolation Grid
+The **Resolution** spinbox (pixels) controls the spatial interpolation grid size. Higher values give smoother maps but take slightly longer to render.
+
+### Colour Limits
+By default, the colour scale is fitted automatically to the data range. Uncheck **Auto** to enter manual **Min** and **Max** values — useful for comparing maps across different time segments on the same scale.
+
+### Save Figure
+Click **💾 Save Figure** to export the current heatmap as PDF (vector), SVG (vector), or PNG. PDF and SVG formats are fully editable in Adobe Illustrator or Inkscape.
