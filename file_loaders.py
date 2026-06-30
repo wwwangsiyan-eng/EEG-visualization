@@ -714,6 +714,7 @@ class FileLoaderRegistry:
             SimpleNCSLoader(),  # Fallback
             RHDLoader(),
             EDFLoader(),  # EDF/BDF support
+            DATLoader(),  # BCI2000 / Curry .dat support
         ]
     
     def get_loader(self, file_path: Path) -> Optional[FileLoader]:
@@ -760,7 +761,7 @@ class FileLoaderRegistry:
     
     def get_supported_formats(self) -> list:
         """Return list of supported file extensions."""
-        return ['.mff', '.nsx', '.ns2', '.ncs', '.rhd', '.edf', '.bdf']
+        return ['.mff', '.nsx', '.ns2', '.ncs', '.rhd', '.edf', '.bdf', '.dat']
 
 
 # Global registry instance

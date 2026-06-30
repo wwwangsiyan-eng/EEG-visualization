@@ -113,29 +113,21 @@ class EEGViewerWidget(QWidget):
         """Initialize the user interface."""
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(5, 5, 5, 5)
-        
-        # Create splitter for plot and metadata panel
-        splitter = QSplitter(Qt.Horizontal)
-        
-        # Left side: Plot and controls
-        plot_widget = QWidget()
-        plot_layout = QVBoxLayout(plot_widget)
-        plot_layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Toolbar
+        main_layout.setSpacing(3)
+
+        # Toolbar spans full width
         toolbar = self._create_toolbar()
-        plot_layout.addWidget(toolbar)
-        
-        # Matplotlib figure and canvas
-        # Use constrained_layout to avoid tight_layout warnings and prevent resizing issues
+        main_layout.addWidget(toolbar)
+
+        # Matplotlib figure and canvas — takes all available vertical space
         self.figure = Figure(figsize=(12, 8), dpi=100, constrained_layout=True)
         self.figure.patch.set_facecolor('#f8f8f8')
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.canvas.setMinimumSize(400, 300)  # Prevent canvas from becoming too small
-        plot_layout.addWidget(self.canvas, stretch=1)
-        
-        # Time scrollbar (horizontal)
+        self.canvas.setMinimumSize(400, 300)
+        main_layout.addWidget(self.canvas, stretch=1)
+
+        # Time scrollbar
         scroll_layout = QHBoxLayout()
         scroll_layout.addWidget(QLabel("Time:"))
         self.time_scrollbar = QScrollBar(Qt.Horizontal)
@@ -144,33 +136,18 @@ class EEGViewerWidget(QWidget):
         self.time_scrollbar.setValue(0)
         self.time_scrollbar.valueChanged.connect(self._on_scroll_changed)
         scroll_layout.addWidget(self.time_scrollbar, stretch=1)
-        
-        self.time_label = QLabel("0.00 - 10.00 s")
-        self.time_label.setMinimumWidth(120)
+        self.time_label = QLabel("0.00 – 10.00 s")
+        self.time_label.setMinimumWidth(130)
         scroll_layout.addWidget(self.time_label)
-        plot_layout.addLayout(scroll_layout)
-        
-        splitter.addWidget(plot_widget)
-        
-        # Right side: Metadata panel
-        metadata_panel = self._create_metadata_panel()
-        splitter.addWidget(metadata_panel)
-        
-        # Set splitter sizes (70% plot, 30% metadata)
-        splitter.setSizes([700, 300])
-        # Set stretch factors to maintain proportions during resize
-        splitter.setStretchFactor(0, 7)  # Plot widget gets more stretch
-        splitter.setStretchFactor(1, 3)  # Metadata panel gets less stretch
-        
-        main_layout.addWidget(splitter, stretch=1)
-        
-        # Control panel at the bottom (spanning full width)
+        main_layout.addLayout(scroll_layout)
+
+        # Control panel — two-row layout at the bottom
         control_panel = self._create_control_panel()
         main_layout.addWidget(control_panel)
-        
+
         # Status bar
         self.status_bar = QStatusBar()
-        self.status_bar.showMessage("No data loaded")
+        self.status_bar.showMessage("No data loaded — open a file to begin")
         main_layout.addWidget(self.status_bar)
     
     def _create_toolbar(self) -> QToolBar:
@@ -223,158 +200,282 @@ class EEGViewerWidget(QWidget):
         toolbar.addAction(reset_action)
         
         toolbar.addSeparator()
-        
+
         # Channel selector
-        channel_action = QAction("📊 Select Channels", self)
+        channel_action = QAction("📊 Channels", self)
+        channel_action.setToolTip("Select which channels to display")
         channel_action.triggered.connect(self._open_channel_selector)
         toolbar.addAction(channel_action)
-        
+
+        toolbar.addSeparator()
+
+        # Analysis tool windows (previously in the right-side button panel)
+        signal_info_action = QAction("📋 Signal Info", self)
+        signal_info_action.setToolTip("Open signal metadata and channel information")
+        signal_info_action.triggered.connect(self._open_signal_info_window)
+        toolbar.addAction(signal_info_action)
+
+        fft_action = QAction("🌊 FFT View", self)
+        fft_action.setToolTip("Open FFT spectrogram view in a new window")
+        fft_action.triggered.connect(self._open_fft_window)
+        toolbar.addAction(fft_action)
+
+        filter_action = QAction("🔬 Filter View", self)
+        filter_action.setToolTip("Open multi-band filtering view in a new window")
+        filter_action.triggered.connect(self._open_filtering_window)
+        toolbar.addAction(filter_action)
+
         return toolbar
     
     def _create_control_panel(self) -> QFrame:
-        """Create the control panel with scale adjustments."""
+        """Create the two-row control panel at the bottom of the viewer."""
         frame = QFrame()
         frame.setFrameStyle(QFrame.StyledPanel)
-        layout = QHBoxLayout(frame)
-        layout.setContentsMargins(5, 5, 5, 5)
-        
-        # X-Scale (Time Window)
+        outer = QVBoxLayout(frame)
+        outer.setContentsMargins(6, 5, 6, 5)
+        outer.setSpacing(4)
+
+        # ── Row 1: Time window, amplitude, spacing, epoch ───────────────
+        row1 = QHBoxLayout()
+        row1.setSpacing(6)
+
+        # Time Window
         x_group = QGroupBox("Time Window")
         x_layout = QHBoxLayout(x_group)
-        
+        x_layout.setContentsMargins(8, 6, 8, 6)
+        x_layout.setSpacing(4)
         x_layout.addWidget(QLabel("Window (s):"))
         self.time_window_spin = QDoubleSpinBox()
         self.time_window_spin.setRange(0.1, 300.0)
         self.time_window_spin.setValue(10.0)
         self.time_window_spin.setSingleStep(1.0)
         self.time_window_spin.setDecimals(1)
-        self.time_window_spin.setFocusPolicy(Qt.StrongFocus)  # Require explicit click to focus
+        self.time_window_spin.setMinimumWidth(72)
+        self.time_window_spin.setFocusPolicy(Qt.StrongFocus)
         self.time_window_spin.valueChanged.connect(self._on_time_window_changed)
         x_layout.addWidget(self.time_window_spin)
-        
-        # Quick time presets
         for preset in [1, 5, 10, 30, 60]:
             btn = QPushButton(f"{preset}s")
-            btn.setMaximumWidth(40)
+            btn.setMinimumWidth(36)
+            btn.setMaximumWidth(46)
             btn.clicked.connect(lambda checked, t=preset: self._set_time_window(t))
             x_layout.addWidget(btn)
-        
-        layout.addWidget(x_group)
-        
-        # Y-Scale (Amplitude)
+        row1.addWidget(x_group)
+
+        # Amplitude Scale
         y_group = QGroupBox("Amplitude Scale")
         y_layout = QHBoxLayout(y_group)
-        
+        y_layout.setContentsMargins(8, 6, 8, 6)
+        y_layout.setSpacing(4)
         y_layout.addWidget(QLabel("Scale:"))
         self.amplitude_spin = QDoubleSpinBox()
         self.amplitude_spin.setRange(0.01, 200.0)
         self.amplitude_spin.setValue(1.0)
         self.amplitude_spin.setSingleStep(1.0)
         self.amplitude_spin.setDecimals(2)
+        self.amplitude_spin.setMinimumWidth(72)
         self.amplitude_spin.valueChanged.connect(self._on_amplitude_changed)
         y_layout.addWidget(self.amplitude_spin)
-        
-        # Amplitude presets
-        amp_down = QPushButton("−")
-        amp_down.setMaximumWidth(30)
+        amp_down = QPushButton("½×")
+        amp_down.setMinimumWidth(38)
+        amp_down.setToolTip("Halve amplitude scale")
         amp_down.clicked.connect(lambda: self._adjust_amplitude(0.5))
         y_layout.addWidget(amp_down)
-        
-        amp_up = QPushButton("+")
-        amp_up.setMaximumWidth(30)
+        amp_up = QPushButton("2×")
+        amp_up.setMinimumWidth(38)
+        amp_up.setToolTip("Double amplitude scale")
         amp_up.clicked.connect(lambda: self._adjust_amplitude(2.0))
         y_layout.addWidget(amp_up)
-        
-        layout.addWidget(y_group)
-        
+        row1.addWidget(y_group)
+
         # Channel Spacing
-        spacing_group = QGroupBox("Channel Spacing")
+        spacing_group = QGroupBox("Ch. Spacing")
         spacing_layout = QHBoxLayout(spacing_group)
-        
+        spacing_layout.setContentsMargins(8, 6, 8, 6)
         self.spacing_spin = QDoubleSpinBox()
         self.spacing_spin.setRange(0.1, 10.0)
         self.spacing_spin.setValue(1.0)
         self.spacing_spin.setSingleStep(0.1)
         self.spacing_spin.setDecimals(1)
+        self.spacing_spin.setMinimumWidth(64)
         self.spacing_spin.valueChanged.connect(self._on_spacing_changed)
         spacing_layout.addWidget(self.spacing_spin)
-        
-        layout.addWidget(spacing_group)
-        
-        # Epoch selector (for 3D data)
+        row1.addWidget(spacing_group)
+
+        # Epoch selector (hidden unless 3D data is loaded)
         self.epoch_group = QGroupBox("Epoch")
         epoch_layout = QHBoxLayout(self.epoch_group)
-        
+        epoch_layout.setContentsMargins(8, 6, 8, 6)
         self.epoch_spin = QSpinBox()
         self.epoch_spin.setRange(0, 0)
+        self.epoch_spin.setMinimumWidth(58)
         self.epoch_spin.valueChanged.connect(self._on_epoch_changed)
         epoch_layout.addWidget(self.epoch_spin)
-        
         self.epoch_label = QLabel("/ 0")
         epoch_layout.addWidget(self.epoch_label)
-        
-        self.epoch_group.setVisible(False)  # Hidden by default
-        layout.addWidget(self.epoch_group)
-        
-        # Grid toggle
-        self.grid_check = QCheckBox("Grid")
-        self.grid_check.setChecked(True)
-        self.grid_check.stateChanged.connect(self._on_grid_changed)
-        layout.addWidget(self.grid_check)
-        
-        # Auto-scroll controls
+        self.epoch_group.setVisible(False)
+        row1.addWidget(self.epoch_group)
+
+        row1.addStretch()
+        outer.addLayout(row1)
+
+        # ── Row 2: Playback, highpass filter, display toggles ───────────
+        row2 = QHBoxLayout()
+        row2.setSpacing(6)
+
+        # Auto Scroll
         scroll_group = QGroupBox("Auto Scroll")
         scroll_layout = QHBoxLayout(scroll_group)
-        
-        self.auto_scroll_btn = QPushButton("▶ Play")
+        scroll_layout.setContentsMargins(8, 6, 8, 6)
+        scroll_layout.setSpacing(4)
+        self.auto_scroll_btn = QPushButton("▶  Play")
         self.auto_scroll_btn.setCheckable(True)
-        self.auto_scroll_btn.setMaximumWidth(70)
+        self.auto_scroll_btn.setMinimumWidth(80)
         self.auto_scroll_btn.clicked.connect(self._toggle_auto_scroll)
         scroll_layout.addWidget(self.auto_scroll_btn)
-        
         scroll_layout.addWidget(QLabel("Speed:"))
         self.scroll_speed_spin = QDoubleSpinBox()
         self.scroll_speed_spin.setRange(0.1, 40.0)
         self.scroll_speed_spin.setValue(20.0)
         self.scroll_speed_spin.setSingleStep(5.0)
-        self.scroll_speed_spin.setSuffix("x")
-        self.scroll_speed_spin.setToolTip("Playback speed (1x = real-time)")
+        self.scroll_speed_spin.setSuffix("×")
+        self.scroll_speed_spin.setMinimumWidth(72)
+        self.scroll_speed_spin.setToolTip("Playback speed (1× = real-time)")
         self.scroll_speed_spin.valueChanged.connect(self._on_scroll_speed_changed)
         scroll_layout.addWidget(self.scroll_speed_spin)
-        
-        layout.addWidget(scroll_group)
-        
-        # Highpass filter controls
+        row2.addWidget(scroll_group)
+
+        # Highpass Filter
         hp_group = QGroupBox("Highpass Filter")
         hp_layout = QHBoxLayout(hp_group)
-        
+        hp_layout.setContentsMargins(8, 6, 8, 6)
+        hp_layout.setSpacing(4)
         self.highpass_check = QCheckBox("Enable")
         self.highpass_check.setToolTip("Apply highpass filter to remove DC drift and align traces to baseline")
         self.highpass_check.stateChanged.connect(self._on_highpass_changed)
         hp_layout.addWidget(self.highpass_check)
-        
-        hp_layout.addWidget(QLabel("Hz:"))
+        hp_layout.addWidget(QLabel("Cutoff:"))
         self.highpass_spin = QDoubleSpinBox()
         self.highpass_spin.setRange(0.01, 30.0)
         self.highpass_spin.setValue(0.5)
         self.highpass_spin.setSingleStep(0.1)
         self.highpass_spin.setDecimals(2)
+        self.highpass_spin.setSuffix(" Hz")
+        self.highpass_spin.setMinimumWidth(84)
         self.highpass_spin.setToolTip("Highpass cutoff frequency in Hz")
         self.highpass_spin.valueChanged.connect(self._on_highpass_freq_changed)
         hp_layout.addWidget(self.highpass_spin)
-        
-        layout.addWidget(hp_group)
-        
-        # 10-20 Conversion toggle
+        row2.addWidget(hp_group)
+
+        # Display toggles
+        display_group = QGroupBox("Display")
+        display_layout = QHBoxLayout(display_group)
+        display_layout.setContentsMargins(12, 6, 12, 6)
+        display_layout.setSpacing(16)
+        self.grid_check = QCheckBox("Show Grid")
+        self.grid_check.setChecked(True)
+        self.grid_check.stateChanged.connect(self._on_grid_changed)
+        display_layout.addWidget(self.grid_check)
         self.convert_1020_check = QCheckBox("10-20 Format")
         self.convert_1020_check.setToolTip("Convert EGI channels to standard 10-20 format by averaging mapped electrodes")
         self.convert_1020_check.stateChanged.connect(self._on_convert_1020_changed)
-        layout.addWidget(self.convert_1020_check)
-        
-        layout.addStretch()
-        
+        display_layout.addWidget(self.convert_1020_check)
+        row2.addWidget(display_group)
+
+        row2.addStretch()
+        outer.addLayout(row2)
+
         return frame
     
+    def _create_button_panel(self) -> QFrame:
+        """Create the right-side button group panel."""
+        frame = QFrame()
+        frame.setFrameStyle(QFrame.StyledPanel)
+        frame.setMinimumWidth(160)
+        frame.setMaximumWidth(220)
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(8, 12, 8, 12)
+        layout.setSpacing(12)
+
+        title = QLabel("Tools")
+        title_font = QFont()
+        title_font.setBold(True)
+        title_font.setPointSize(11)
+        title.setFont(title_font)
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        btn_style = (
+            "QPushButton { padding: 8px 4px; font-size: 12px; border-radius: 6px; "
+            "background-color: #e8eaf6; border: 1px solid #9fa8da; }"
+            "QPushButton:hover { background-color: #c5cae9; }"
+            "QPushButton:pressed { background-color: #9fa8da; }"
+        )
+
+        signal_info_btn = QPushButton("📋 Signal\nInformation")
+        signal_info_btn.setToolTip("Open signal information in a new window")
+        signal_info_btn.setStyleSheet(btn_style)
+        signal_info_btn.setMinimumHeight(55)
+        signal_info_btn.clicked.connect(self._open_signal_info_window)
+        layout.addWidget(signal_info_btn)
+
+        fft_btn = QPushButton("📊 FFT Over\nTime")
+        fft_btn.setToolTip("Open FFT spectrogram view in a new window")
+        fft_btn.setStyleSheet(btn_style)
+        fft_btn.setMinimumHeight(55)
+        fft_btn.clicked.connect(self._open_fft_window)
+        layout.addWidget(fft_btn)
+
+        filter_btn = QPushButton("🔬 Filtering\nView")
+        filter_btn.setToolTip("Open multi-band filtered view in a new window")
+        filter_btn.setStyleSheet(btn_style)
+        filter_btn.setMinimumHeight(55)
+        filter_btn.clicked.connect(self._open_filtering_window)
+        layout.addWidget(filter_btn)
+
+        layout.addStretch()
+        return frame
+
+    def _open_signal_info_window(self):
+        """Open signal information in a new window."""
+        if self.eeg_signal is None:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.information(self, "No Data", "No EEG data loaded yet.")
+            return
+        win = SignalInfoWindow(self.eeg_signal, parent=self)
+        win.show()
+        # Keep reference so it's not garbage collected
+        if not hasattr(self, '_open_windows'):
+            self._open_windows = []
+        self._open_windows.append(win)
+        win.destroyed.connect(lambda: self._open_windows.remove(win) if win in self._open_windows else None)
+
+    def _open_fft_window(self):
+        """Open FFT over time view in a new window."""
+        if self.eeg_signal is None:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.information(self, "No Data", "No EEG data loaded yet.")
+            return
+        win = FFTOverTimeWindow(self.eeg_signal, parent=self)
+        win.show()
+        if not hasattr(self, '_open_windows'):
+            self._open_windows = []
+        self._open_windows.append(win)
+        win.destroyed.connect(lambda: self._open_windows.remove(win) if win in self._open_windows else None)
+
+    def _open_filtering_window(self):
+        """Open filtering view in a new window."""
+        if self.eeg_signal is None:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.information(self, "No Data", "No EEG data loaded yet.")
+            return
+        win = FilteringWindow(self.eeg_signal, parent=self)
+        win.show()
+        if not hasattr(self, '_open_windows'):
+            self._open_windows = []
+        self._open_windows.append(win)
+        win.destroyed.connect(lambda: self._open_windows.remove(win) if win in self._open_windows else None)
+
     def _create_metadata_panel(self) -> QFrame:
         """Create the metadata display panel."""
         frame = QFrame()
@@ -1852,6 +1953,701 @@ class EEGViewerWidget(QWidget):
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", f"Failed to save plot:\n{str(e)}")
                 self.status_bar.showMessage("Export failed")
+
+class SignalInfoWindow(QWidget):
+    """Standalone window that shows signal information (metadata) for an EEGSignal."""
+
+    def __init__(self, eeg_signal: EEGSignal, parent=None):
+        super().__init__(parent)
+        self.eeg_signal = eeg_signal
+        self.setWindowTitle("Signal Information")
+        self.setMinimumSize(500, 500)
+        self.resize(600, 600)
+        # Make it a real independent window
+        self.setWindowFlags(Qt.Window)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+
+        title = QLabel("📋 Signal Information")
+        font = QFont()
+        font.setBold(True)
+        font.setPointSize(12)
+        title.setFont(font)
+        layout.addWidget(title)
+
+        # Basic info
+        info_group = QGroupBox("Basic Information")
+        info_layout = QVBoxLayout(info_group)
+        info_table = QTableWidget()
+        info_table.setColumnCount(2)
+        info_table.setHorizontalHeaderLabels(["Property", "Value"])
+        info_table.horizontalHeader().setStretchLastSection(True)
+        info_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        info_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        info_table.setAlternatingRowColors(True)
+
+        eeg = eeg_signal
+        if eeg.data.ndim == 3:
+            n_epochs, n_channels, n_samples = eeg.data.shape
+            shape_str = f"{n_epochs} epochs × {n_channels} ch × {n_samples} samples"
+        else:
+            n_channels, n_samples = eeg.data.shape
+            shape_str = f"{n_channels} ch × {n_samples} samples"
+
+        basic_info = [
+            ("Data Type", eeg.data_type.value if eeg.data_type else "N/A"),
+            ("Shape", shape_str),
+            ("Sampling Rate", f"{eeg.sampling_rate:.1f} Hz"),
+            ("Duration", f"{n_samples / eeg.sampling_rate:.2f} s"),
+            ("Channels", str(n_channels)),
+            ("Data dtype", str(eeg.data.dtype)),
+        ]
+        info_table.setRowCount(len(basic_info))
+        for i, (k, v) in enumerate(basic_info):
+            info_table.setItem(i, 0, QTableWidgetItem(k))
+            info_table.setItem(i, 1, QTableWidgetItem(str(v)))
+        info_layout.addWidget(info_table)
+        layout.addWidget(info_group)
+
+        # Metadata
+        meta_group = QGroupBox("Metadata")
+        meta_layout = QVBoxLayout(meta_group)
+        meta_table = QTableWidget()
+        meta_table.setColumnCount(2)
+        meta_table.setHorizontalHeaderLabels(["Key", "Value"])
+        meta_table.horizontalHeader().setStretchLastSection(True)
+        meta_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        meta_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        meta_table.setAlternatingRowColors(True)
+        metadata = eeg.metadata or {}
+        meta_table.setRowCount(len(metadata))
+        for i, (k, v) in enumerate(sorted(metadata.items())):
+            meta_table.setItem(i, 0, QTableWidgetItem(str(k)))
+            val_str = str(v)
+            if len(val_str) > 80:
+                val_str = val_str[:77] + "..."
+            meta_table.setItem(i, 1, QTableWidgetItem(val_str))
+        meta_layout.addWidget(meta_table)
+        layout.addWidget(meta_group)
+
+        # Channels
+        ch_group = QGroupBox("Channels")
+        ch_layout = QVBoxLayout(ch_group)
+        ch_table = QTableWidget()
+        ch_table.setColumnCount(3)
+        ch_table.setHorizontalHeaderLabels(["#", "Name", "Range (µV)"])
+        ch_table.horizontalHeader().setStretchLastSection(True)
+        ch_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        ch_table.setAlternatingRowColors(True)
+        data = eeg.data[0] if eeg.data.ndim == 3 else eeg.data
+        ch_names = eeg.channel_names or [f"Ch{i+1}" for i in range(data.shape[0])]
+        ch_table.setRowCount(min(data.shape[0], 128))
+        for i in range(min(data.shape[0], 128)):
+            ch_min, ch_max = np.min(data[i]), np.max(data[i])
+            ch_table.setItem(i, 0, QTableWidgetItem(str(i + 1)))
+            ch_table.setItem(i, 1, QTableWidgetItem(ch_names[i] if i < len(ch_names) else f"Ch{i+1}"))
+            ch_table.setItem(i, 2, QTableWidgetItem(f"{ch_min:.1f} to {ch_max:.1f}"))
+        ch_layout.addWidget(ch_table)
+        layout.addWidget(ch_group)
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        layout.addWidget(close_btn)
+
+
+# ---------------------------------------------------------------------------
+# Shared single-channel control mixin
+# ---------------------------------------------------------------------------
+
+class _SingleChannelControlsMixin:
+    """
+    Mixin that provides a re-usable single-channel selector + playback/scale
+    controls panel, identical in behaviour to the main EEGViewerWidget controls.
+
+    Subclasses must call  _build_shared_controls(eeg_signal)  and will receive:
+        self._eeg         – the EEGSignal
+        self._ch_idx      – currently selected channel index (int)
+        self._time_start  – current view-start time (float, seconds)
+        self._time_win    – visible time window (float, seconds)
+        self._amp_scale   – amplitude scale multiplier
+        self._hp_enabled  – highpass filter enabled (bool)
+        self._hp_freq     – highpass cut-off (Hz)
+        self._auto_timer  – QTimer for auto-scroll
+        self._scroll_speed– playback speed (x real-time)
+    And will have connected slot  _on_controls_changed()  that subclasses must implement.
+    """
+
+    def _build_shared_controls(self, eeg_signal: EEGSignal) -> QWidget:
+        """Build and return the shared controls widget. Stores state on self."""
+        self._eeg = eeg_signal
+        self._ch_idx = 0
+        self._time_start = 0.0
+        self._time_win = 10.0
+        self._amp_scale = 1.0
+        self._hp_enabled = False
+        self._hp_freq = 0.5
+        self._scroll_speed = 20.0
+        self._auto_scroll_active = False
+        self._last_scroll_time_mono = None
+        self._base_spacing = 100.0
+
+        outer = QWidget()
+        vbox = QVBoxLayout(outer)
+        vbox.setContentsMargins(4, 4, 4, 4)
+        vbox.setSpacing(6)
+
+        # ── Channel selector ──
+        ch_group = QGroupBox("Channel")
+        ch_row = QHBoxLayout(ch_group)
+        ch_names = eeg_signal.channel_names or [
+            f"Ch{i+1}" for i in range(self._n_channels())
+        ]
+        self._ch_combo = QComboBox()
+        for i, n in enumerate(ch_names):
+            self._ch_combo.addItem(f"{i}: {n}", i)
+        self._ch_combo.currentIndexChanged.connect(self._on_channel_changed)
+        ch_row.addWidget(self._ch_combo)
+        vbox.addWidget(ch_group)
+
+        # ── Time window ──
+        tw_group = QGroupBox("Time Window")
+        tw_row = QHBoxLayout(tw_group)
+        tw_row.addWidget(QLabel("Window (s):"))
+        self._tw_spin = QDoubleSpinBox()
+        self._tw_spin.setRange(0.1, 300.0)
+        self._tw_spin.setValue(self._time_win)
+        self._tw_spin.setSingleStep(1.0)
+        self._tw_spin.setDecimals(1)
+        self._tw_spin.valueChanged.connect(self._on_tw_changed)
+        tw_row.addWidget(self._tw_spin)
+        for t in [1, 5, 10, 30]:
+            b = QPushButton(f"{t}s")
+            b.setMaximumWidth(35)
+            b.clicked.connect(lambda _, v=t: self._tw_spin.setValue(v))
+            tw_row.addWidget(b)
+        vbox.addWidget(tw_group)
+
+        # ── Time scroll bar ──
+        sb_row = QHBoxLayout()
+        sb_row.addWidget(QLabel("Pos:"))
+        self._time_sb = QScrollBar(Qt.Horizontal)
+        self._time_sb.setMinimum(0)
+        self._time_sb.setMaximum(1000)
+        self._time_sb.valueChanged.connect(self._on_sb_changed)
+        sb_row.addWidget(self._time_sb, stretch=1)
+        self._time_lbl = QLabel("0.00 – 10.00 s")
+        self._time_lbl.setMinimumWidth(120)
+        sb_row.addWidget(self._time_lbl)
+        vbox.addLayout(sb_row)
+
+        # ── Amplitude ──
+        amp_group = QGroupBox("Amplitude Scale")
+        amp_row = QHBoxLayout(amp_group)
+        amp_row.addWidget(QLabel("Scale:"))
+        self._amp_spin = QDoubleSpinBox()
+        self._amp_spin.setRange(0.01, 200.0)
+        self._amp_spin.setValue(self._amp_scale)
+        self._amp_spin.setSingleStep(0.5)
+        self._amp_spin.setDecimals(2)
+        self._amp_spin.valueChanged.connect(self._on_amp_changed)
+        amp_row.addWidget(self._amp_spin)
+        amp_dn = QPushButton("−")
+        amp_dn.setMaximumWidth(28)
+        amp_dn.clicked.connect(lambda: self._amp_spin.setValue(self._amp_spin.value() * 0.5))
+        amp_row.addWidget(amp_dn)
+        amp_up = QPushButton("+")
+        amp_up.setMaximumWidth(28)
+        amp_up.clicked.connect(lambda: self._amp_spin.setValue(self._amp_spin.value() * 2.0))
+        amp_row.addWidget(amp_up)
+        vbox.addWidget(amp_group)
+
+        # ── Zoom ──
+        zoom_row = QHBoxLayout()
+        zi = QPushButton("🔍+ Zoom In")
+        zi.clicked.connect(lambda: self._tw_spin.setValue(self._time_win / 2))
+        zoom_row.addWidget(zi)
+        zo = QPushButton("🔍− Zoom Out")
+        zo.clicked.connect(lambda: self._tw_spin.setValue(self._time_win * 2))
+        zoom_row.addWidget(zo)
+        vbox.addLayout(zoom_row)
+
+        # ── Auto-scroll ──
+        sc_group = QGroupBox("Auto Scroll")
+        sc_row = QHBoxLayout(sc_group)
+        self._play_btn = QPushButton("▶ Play")
+        self._play_btn.setCheckable(True)
+        self._play_btn.setMaximumWidth(70)
+        self._play_btn.clicked.connect(self._on_play_clicked)
+        sc_row.addWidget(self._play_btn)
+        sc_row.addWidget(QLabel("Speed:"))
+        self._speed_spin = QDoubleSpinBox()
+        self._speed_spin.setRange(0.1, 40.0)
+        self._speed_spin.setValue(self._scroll_speed)
+        self._speed_spin.setSingleStep(5.0)
+        self._speed_spin.setSuffix("x")
+        self._speed_spin.valueChanged.connect(lambda v: setattr(self, '_scroll_speed', v))
+        sc_row.addWidget(self._speed_spin)
+        vbox.addWidget(sc_group)
+
+        # ── Highpass filter ──
+        hp_group = QGroupBox("Highpass Filter")
+        hp_row = QHBoxLayout(hp_group)
+        self._hp_check = QCheckBox("Enable")
+        self._hp_check.stateChanged.connect(self._on_hp_changed)
+        hp_row.addWidget(self._hp_check)
+        hp_row.addWidget(QLabel("Hz:"))
+        self._hp_spin = QDoubleSpinBox()
+        self._hp_spin.setRange(0.01, 30.0)
+        self._hp_spin.setValue(self._hp_freq)
+        self._hp_spin.setSingleStep(0.1)
+        self._hp_spin.setDecimals(2)
+        self._hp_spin.valueChanged.connect(self._on_hp_freq_changed)
+        hp_row.addWidget(self._hp_spin)
+        vbox.addWidget(hp_group)
+
+        vbox.addStretch()
+
+        # ── Auto-scroll timer ──
+        self._auto_timer = QTimer()
+        self._auto_timer.setInterval(50)
+        self._auto_timer.timeout.connect(self._auto_scroll_tick)
+
+        self._update_sb_range()
+        return outer
+
+    # ── helpers ──
+    def _n_channels(self):
+        eeg = self._eeg
+        if eeg.data.ndim == 3:
+            return eeg.data.shape[1]
+        return eeg.data.shape[0]
+
+    def _n_samples(self):
+        eeg = self._eeg
+        if eeg.data.ndim == 3:
+            return eeg.data.shape[2]
+        return eeg.data.shape[1]
+
+    def _get_channel_data(self, ch_idx=None):
+        """Return 1-D array for the selected channel (full recording)."""
+        if ch_idx is None:
+            ch_idx = self._ch_idx
+        eeg = self._eeg
+        data = eeg.data[0] if eeg.data.ndim == 3 else eeg.data
+        return data[ch_idx]
+
+    def _apply_hp(self, signal_1d, sfreq):
+        if not self._hp_enabled or len(signal_1d) < 20:
+            return signal_1d
+        nyq = sfreq / 2.0
+        if self._hp_freq >= nyq:
+            return signal_1d
+        try:
+            sos = butter(4, self._hp_freq / nyq, btype='highpass', output='sos')
+            return sosfiltfilt(sos, signal_1d)
+        except Exception:
+            return signal_1d
+
+    def _apply_bp(self, signal_1d, sfreq, lo, hi):
+        """Bandpass filter a 1-D signal."""
+        nyq = sfreq / 2.0
+        lo_n = max(0.001, lo / nyq)
+        hi_n = min(0.999, hi / nyq)
+        if lo_n >= hi_n or len(signal_1d) < 20:
+            return signal_1d
+        try:
+            sos = butter(4, [lo_n, hi_n], btype='bandpass', output='sos')
+            return sosfiltfilt(sos, signal_1d)
+        except Exception:
+            return signal_1d
+
+    def _update_sb_range(self):
+        sfreq = self._eeg.sampling_rate
+        total = self._n_samples() / sfreq
+        max_scroll = max(0.0, total - self._time_win)
+        self._time_sb.setMaximum(int(max_scroll * 10))
+        self._time_sb.setPageStep(int(self._time_win * 10))
+
+    def _update_time_label(self):
+        self._time_lbl.setText(
+            f"{self._time_start:.2f} – {self._time_start + self._time_win:.2f} s"
+        )
+
+    # ── slots ──
+    def _on_channel_changed(self, idx):
+        self._ch_idx = self._ch_combo.itemData(idx)
+        self._on_controls_changed()
+
+    def _on_tw_changed(self, val):
+        self._time_win = val
+        self._update_sb_range()
+        self._on_controls_changed()
+
+    def _on_sb_changed(self, val):
+        self._time_start = val / 10.0
+        self._update_time_label()
+        self._on_controls_changed()
+
+    def _on_amp_changed(self, val):
+        self._amp_scale = val
+        self._on_controls_changed()
+
+    def _on_hp_changed(self, state):
+        self._hp_enabled = (state == Qt.Checked)
+        self._on_controls_changed()
+
+    def _on_hp_freq_changed(self, val):
+        self._hp_freq = val
+        if self._hp_enabled:
+            self._on_controls_changed()
+
+    def _on_play_clicked(self, checked):
+        if checked:
+            self._auto_scroll_active = True
+            self._play_btn.setText("⏸ Pause")
+            self._last_scroll_time_mono = None
+            self._auto_timer.start()
+        else:
+            self._auto_scroll_active = False
+            self._play_btn.setText("▶ Play")
+            self._play_btn.setChecked(False)
+            self._auto_timer.stop()
+
+    def _auto_scroll_tick(self):
+        import time as _time
+        now = _time.monotonic()
+        if self._last_scroll_time_mono is None:
+            elapsed = 0.05
+        else:
+            elapsed = now - self._last_scroll_time_mono
+        self._last_scroll_time_mono = now
+
+        sfreq = self._eeg.sampling_rate
+        total = self._n_samples() / sfreq
+        max_start = total - self._time_win
+        new_start = self._time_start + self._scroll_speed * elapsed
+
+        if new_start >= max_start:
+            self._time_start = max(0.0, max_start)
+            self._on_play_clicked(False)
+        else:
+            self._time_start = new_start
+
+        self._time_sb.blockSignals(True)
+        self._time_sb.setValue(int(self._time_start * 10))
+        self._time_sb.blockSignals(False)
+        self._update_time_label()
+        self._on_controls_changed()
+
+    def _on_controls_changed(self):
+        """Override in subclass to redraw."""
+        raise NotImplementedError
+
+
+# ---------------------------------------------------------------------------
+# FFT Over Time window
+# ---------------------------------------------------------------------------
+
+class FFTOverTimeWindow(_SingleChannelControlsMixin, QWidget):
+    """
+    New window: top = EEG trace of the selected channel,
+    bottom = FFT spectrogram time-locked to the trace.
+    Controls are identical to the main viewer (single-channel).
+    """
+
+    def __init__(self, eeg_signal: EEGSignal, parent=None):
+        QWidget.__init__(self, parent)
+        self.setWindowTitle("FFT Over Time")
+        self.setWindowFlags(Qt.Window)
+        self.setMinimumSize(900, 650)
+        self.resize(1100, 750)
+
+        # Build shared controls (sets self._eeg, etc.)
+        controls_widget = self._build_shared_controls(eeg_signal)
+
+        # ── Matplotlib figures ──
+        self._figure = Figure(figsize=(10, 7), dpi=100, constrained_layout=True)
+        self._figure.patch.set_facecolor('#f8f8f8')
+        self._canvas = FigureCanvas(self._figure)
+        self._canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        # Main layout: plot on left, controls on right
+        main = QHBoxLayout(self)
+        main.setContentsMargins(4, 4, 4, 4)
+
+        plot_side = QVBoxLayout()
+        plot_side.addWidget(self._canvas, stretch=1)
+        main.addLayout(plot_side, stretch=1)
+
+        # Wrap controls in a scroll area so they don't overflow on small screens
+        ctrl_scroll = QScrollArea()
+        ctrl_scroll.setWidgetResizable(True)
+        ctrl_scroll.setMaximumWidth(260)
+        ctrl_scroll.setWidget(controls_widget)
+        main.addWidget(ctrl_scroll)
+
+        self._on_controls_changed()
+
+    def _on_controls_changed(self):
+        self._draw()
+
+    def _draw(self):
+        eeg = self._eeg
+        sfreq = eeg.sampling_rate
+        raw = self._get_channel_data()
+
+        # Apply highpass to full signal first
+        raw = self._apply_hp(raw, sfreq)
+
+        n_samples = len(raw)
+        start_s = int(self._time_start * sfreq)
+        end_s = int((self._time_start + self._time_win) * sfreq)
+        end_s = min(end_s, n_samples)
+        if start_s >= end_s:
+            start_s = max(0, end_s - int(sfreq))
+
+        view = raw[start_s:end_s]
+        time_axis = np.arange(start_s, min(end_s, start_s + len(view))) / sfreq
+
+        self._figure.clear()
+        ax_eeg = self._figure.add_subplot(2, 1, 1)
+        ax_spec = self._figure.add_subplot(2, 1, 2)
+
+        # ── EEG trace ──
+        display = view - np.mean(view)
+        display = display * self._amp_scale
+        ax_eeg.plot(time_axis[:len(display)], display, linewidth=0.7, color='#1565C0')
+        ax_eeg.set_xlim(time_axis[0], time_axis[-1])
+        ax_eeg.set_ylabel("Amplitude (µV)")
+        ax_eeg.set_title(
+            f"EEG — {self._ch_combo.currentText().split(': ')[-1]}  "
+            f"[{self._time_start:.2f} – {self._time_start + self._time_win:.2f} s]"
+        )
+        ax_eeg.grid(True, alpha=0.3, linestyle='--')
+
+        # ── Spectrogram ──
+        n_fft = min(256, len(view) // 4)
+        n_fft = max(n_fft, 32)
+        overlap = n_fft * 3 // 4
+        try:
+            from matplotlib.mlab import specgram
+            Pxx, freqs, t_spec = specgram(
+                view, NFFT=n_fft, Fs=sfreq,
+                noverlap=overlap, detrend='mean'
+            )
+            # Limit to 0–100 Hz for readability
+            freq_mask = freqs <= 100.0
+            Pxx = Pxx[freq_mask, :]
+            freqs = freqs[freq_mask]
+            # dB scale, clip to avoid log(0)
+            Pxx_db = 10 * np.log10(np.maximum(Pxx, 1e-12))
+            t_abs = t_spec + self._time_start
+            im = ax_spec.pcolormesh(
+                t_abs, freqs, Pxx_db,
+                cmap='viridis', shading='gouraud'
+            )
+            self._figure.colorbar(im, ax=ax_spec, label='Power (dB)')
+            ax_spec.set_xlim(time_axis[0], time_axis[-1])
+            ax_spec.set_ylabel("Frequency (Hz)")
+            ax_spec.set_xlabel("Time (s)")
+            ax_spec.set_title("FFT Spectrogram")
+        except Exception as e:
+            ax_spec.text(0.5, 0.5, f"Spectrogram error:\n{e}",
+                         ha='center', va='center', transform=ax_spec.transAxes)
+
+        self._canvas.draw_idle()
+        self._update_time_label()
+
+
+# ---------------------------------------------------------------------------
+# Filtering window
+# ---------------------------------------------------------------------------
+
+class FilteringWindow(_SingleChannelControlsMixin, QWidget):
+    """
+    New window: three vertically stacked panels for a single channel —
+      top:    raw (or highpass-filtered) trace
+      middle: bandpass trace (default theta 4–8 Hz), user-adjustable
+      bottom: bandpass trace (default gamma 30–80 Hz), user-adjustable
+    Each of the two filtered panels has its own lo/hi spinboxes on the right.
+    """
+
+    def __init__(self, eeg_signal: EEGSignal, parent=None):
+        QWidget.__init__(self, parent)
+        self.setWindowTitle("Filtering View")
+        self.setWindowFlags(Qt.Window)
+        self.setMinimumSize(950, 700)
+        self.resize(1150, 780)
+
+        # Band-specific state
+        self._band1_lo = 4.0
+        self._band1_hi = 8.0   # theta
+        self._band2_lo = 30.0
+        self._band2_hi = 80.0  # gamma
+
+        controls_widget = self._build_shared_controls(eeg_signal)
+
+        # ── Matplotlib figure ──
+        self._figure = Figure(figsize=(10, 8), dpi=100, constrained_layout=True)
+        self._figure.patch.set_facecolor('#f8f8f8')
+        self._canvas = FigureCanvas(self._figure)
+        self._canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        # Right-side panel: shared controls + band controls
+        right_panel = QWidget()
+        right_vbox = QVBoxLayout(right_panel)
+        right_vbox.setContentsMargins(0, 0, 0, 0)
+        right_vbox.setSpacing(8)
+
+        right_vbox.addWidget(controls_widget, stretch=1)
+
+        # Band 1 box
+        b1_box = QGroupBox("Middle Band (default: Theta)")
+        b1_grid = QGridLayout(b1_box)
+        b1_grid.addWidget(QLabel("Low cut (Hz):"), 0, 0)
+        self._b1_lo_spin = QDoubleSpinBox()
+        self._b1_lo_spin.setRange(0.5, 200.0)
+        self._b1_lo_spin.setValue(self._band1_lo)
+        self._b1_lo_spin.setSingleStep(0.5)
+        self._b1_lo_spin.setDecimals(1)
+        self._b1_lo_spin.valueChanged.connect(self._on_b1_lo)
+        b1_grid.addWidget(self._b1_lo_spin, 0, 1)
+        b1_grid.addWidget(QLabel("High cut (Hz):"), 1, 0)
+        self._b1_hi_spin = QDoubleSpinBox()
+        self._b1_hi_spin.setRange(1.0, 500.0)
+        self._b1_hi_spin.setValue(self._band1_hi)
+        self._b1_hi_spin.setSingleStep(0.5)
+        self._b1_hi_spin.setDecimals(1)
+        self._b1_hi_spin.valueChanged.connect(self._on_b1_hi)
+        b1_grid.addWidget(self._b1_hi_spin, 1, 1)
+        right_vbox.addWidget(b1_box)
+
+        # Band 2 box
+        b2_box = QGroupBox("Bottom Band (default: Gamma)")
+        b2_grid = QGridLayout(b2_box)
+        b2_grid.addWidget(QLabel("Low cut (Hz):"), 0, 0)
+        self._b2_lo_spin = QDoubleSpinBox()
+        self._b2_lo_spin.setRange(0.5, 200.0)
+        self._b2_lo_spin.setValue(self._band2_lo)
+        self._b2_lo_spin.setSingleStep(0.5)
+        self._b2_lo_spin.setDecimals(1)
+        self._b2_lo_spin.valueChanged.connect(self._on_b2_lo)
+        b2_grid.addWidget(self._b2_lo_spin, 0, 1)
+        b2_grid.addWidget(QLabel("High cut (Hz):"), 1, 0)
+        self._b2_hi_spin = QDoubleSpinBox()
+        self._b2_hi_spin.setRange(1.0, 500.0)
+        self._b2_hi_spin.setValue(self._band2_hi)
+        self._b2_hi_spin.setSingleStep(0.5)
+        self._b2_hi_spin.setDecimals(1)
+        self._b2_hi_spin.valueChanged.connect(self._on_b2_hi)
+        b2_grid.addWidget(self._b2_hi_spin, 1, 1)
+        right_vbox.addWidget(b2_box)
+
+        # Scroll area for right panel
+        ctrl_scroll = QScrollArea()
+        ctrl_scroll.setWidgetResizable(True)
+        ctrl_scroll.setMaximumWidth(280)
+        ctrl_scroll.setWidget(right_panel)
+
+        main = QHBoxLayout(self)
+        main.setContentsMargins(4, 4, 4, 4)
+        main.addWidget(self._canvas, stretch=1)
+        main.addWidget(ctrl_scroll)
+
+        self._on_controls_changed()
+
+    # ── band spinbox slots ──
+    def _on_b1_lo(self, v):
+        self._band1_lo = v
+        self._draw()
+
+    def _on_b1_hi(self, v):
+        self._band1_hi = v
+        self._draw()
+
+    def _on_b2_lo(self, v):
+        self._band2_lo = v
+        self._draw()
+
+    def _on_b2_hi(self, v):
+        self._band2_hi = v
+        self._draw()
+
+    def _on_controls_changed(self):
+        self._draw()
+
+    def _draw(self):
+        eeg = self._eeg
+        sfreq = eeg.sampling_rate
+        raw_full = self._get_channel_data()
+
+        # Apply highpass to full signal first (display only)
+        filtered_full = self._apply_hp(raw_full, sfreq)
+
+        n_samples = len(filtered_full)
+        start_s = int(self._time_start * sfreq)
+        end_s = int((self._time_start + self._time_win) * sfreq)
+        end_s = min(end_s, n_samples)
+        if start_s >= end_s:
+            start_s = max(0, end_s - int(sfreq))
+
+        time_axis = np.arange(start_s, min(end_s, n_samples)) / sfreq
+
+        # Slice for display
+        raw_view = filtered_full[start_s:end_s]
+        t = time_axis[:len(raw_view)]
+
+        # Bandpass on the *full* signal then slice (avoids edge artefacts)
+        bp1_full = self._apply_bp(filtered_full, sfreq, self._band1_lo, self._band1_hi)
+        bp2_full = self._apply_bp(filtered_full, sfreq, self._band2_lo, self._band2_hi)
+        bp1_view = bp1_full[start_s:end_s]
+        bp2_view = bp2_full[start_s:end_s]
+
+        def _scale(sig):
+            s = sig - np.mean(sig)
+            return s * self._amp_scale
+
+        ch_label = self._ch_combo.currentText().split(': ')[-1]
+        time_range = f"{self._time_start:.2f} – {self._time_start + self._time_win:.2f} s"
+
+        self._figure.clear()
+        ax1 = self._figure.add_subplot(3, 1, 1)
+        ax2 = self._figure.add_subplot(3, 1, 2)
+        ax3 = self._figure.add_subplot(3, 1, 3)
+
+        # ── Top: raw (or highpassed) trace ──
+        ax1.plot(t, _scale(raw_view), linewidth=0.7, color='#1565C0')
+        ax1.set_xlim(t[0] if len(t) else 0, t[-1] if len(t) else 1)
+        ax1.set_ylabel("µV")
+        hp_label = f"HP {self._hp_freq:.2f} Hz" if self._hp_enabled else "No HP"
+        ax1.set_title(f"Raw Trace — {ch_label}  [{time_range}]  ({hp_label})")
+        ax1.grid(True, alpha=0.3, linestyle='--')
+
+        # ── Middle: band 1 ──
+        ax2.plot(t, _scale(bp1_view), linewidth=0.7, color='#2E7D32')
+        ax2.set_xlim(t[0] if len(t) else 0, t[-1] if len(t) else 1)
+        ax2.set_ylabel("µV")
+        ax2.set_title(
+            f"Bandpass  {self._band1_lo:.1f} – {self._band1_hi:.1f} Hz"
+            f"  (default: Theta)"
+        )
+        ax2.grid(True, alpha=0.3, linestyle='--')
+
+        # ── Bottom: band 2 ──
+        ax3.plot(t, _scale(bp2_view), linewidth=0.7, color='#6A1B9A')
+        ax3.set_xlim(t[0] if len(t) else 0, t[-1] if len(t) else 1)
+        ax3.set_ylabel("µV")
+        ax3.set_xlabel("Time (s)")
+        ax3.set_title(
+            f"Bandpass  {self._band2_lo:.1f} – {self._band2_hi:.1f} Hz"
+            f"  (default: Gamma)"
+        )
+        ax3.grid(True, alpha=0.3, linestyle='--')
+
+        self._canvas.draw_idle()
+        self._update_time_label()
+
 
 class EEGViewerDialog(QDialog):
     """
